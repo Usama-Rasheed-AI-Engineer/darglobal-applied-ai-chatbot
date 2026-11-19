@@ -190,8 +190,11 @@ def scrape() -> list[dict[str, str]]:
     documents: list[dict[str, str]] = []
     manifest: list[dict[str, str]] = []
     today = date.today().isoformat()
+    only_source = os.getenv("SCRAPE_SOURCE", "").strip()
 
     for source, base_url, preferred_terms in SOURCES:
+        if only_source and source.lower() != only_source.lower():
+            continue
         if not robots_allow(base_url):
             continue
         base = urlparse(base_url)
