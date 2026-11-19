@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>DAR Global & Wasalt Property Assistant</title>
+  <style>
+    :root { color-scheme: light; font-family: Inter, system-ui, sans-serif; }
+    body { margin: 0; background: #f4f7f6; color: #17201d; }
+    main { max-width: 760px; margin: 40px auto; padding: 24px; }
+    h1 { font-size: 1.55rem; margin-top: 0; }
+    #chat { height: 55vh; min-height: 360px; overflow-y: auto; background: white; border: 1px solid #dce5e1; border-radius: 12px; padding: 16px; }
+    .message { max-width: 88%; margin: 10px 0; padding: 11px 13px; border-radius: 10px; white-space: pre-wrap; line-height: 1.45; }
+    .user { margin-left: auto; background: #0d6b50; color: white; }
+    .assistant { background: #edf3f0; }
+    form { display: flex; gap: 8px; margin-top: 12px; }
+    input { flex: 1; border: 1px solid #b8c7c1; border-radius: 8px; padding: 12px; }
+    button { border: 0; border-radius: 8px; background: #17201d; color: white; padding: 12px 18px; cursor: pointer; }
+    .note { color: #66736e; font-size: 0.86rem; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>DAR Global & Wasalt Property Assistant</h1>
+    <p class="note">Answers are grounded in collected public sources. Information can change; verify availability and prices with the original source.</p>
+    <div id="chat" aria-live="polite"></div>
+    <form id="form">
+      <input id="message" name="message" maxlength="1000" placeholder="Ask about projects or property services..." required>
+      <button type="submit">Send</button>
+    </form>
+  </main>
+  <script>
+    const chat = document.getElementById('chat');
+    const form = document.getElementById('form');
+    const input = document.getElementById('message');
+    function add(text, role) {
+      const node = document.createElement('div');
+      node.className = `message ${role}`;
+      node.textContent = text;
+      chat.appendChild(node);
+      chat.scrollTop = chat.scrollHeight;
+    }
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const message = input.value.trim();
+      if (!message) return;
+      add(message, 'user');
+      input.value = '';
+      add('Searching public sources...', 'assistant');
+      try {
+        const response = await fetch('/api/chat', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({message})
+        });
+        const payload = await response.json();
+        chat.lastElementChild.remove();
+        if (!response.ok) throw new Error(payload.detail || 'Request failed');
+        add(payload.answer, 'assistant');
+      } catch (error) {
+        chat.lastElementChild.remove();
+        add(error.message, 'assistant');
+      }
+    });
+  </script>
+</body>
+</html>

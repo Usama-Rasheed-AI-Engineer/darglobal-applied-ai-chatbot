@@ -1,0 +1,44 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: darglobal-chatbot
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: darglobal-chatbot
+  template:
+    metadata:
+      labels:
+        app: darglobal-chatbot
+    spec:
+      containers:
+        - name: chatbot
+          image: ghcr.io/OWNER/darglobal-applied-ai-chatbot:latest
+          ports:
+            - containerPort: 8000
+          env:
+            - name: OPENROUTER_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: darglobal-chatbot-secrets
+                  key: openrouter-api-key
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 300m
+              memory: 256Mi
