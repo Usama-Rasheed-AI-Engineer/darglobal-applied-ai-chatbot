@@ -4,7 +4,7 @@
     "source": "DarGlobal",
     "title": "DarGlobal | International Luxury Real Estate Developer",
     "status": "scraped",
-    "chunks": "17",
+    "chunks": "18",
     "collected_at": "2026-11-19"
   },
   {
@@ -2052,6 +2052,14 @@
     "collected_at": "2026-11-19"
   },
   {
+    "url": "https://darglobal.co.uk/blog/top-features-high-net-worth-buyerslook",
+    "source": "DarGlobal",
+    "title": "Top Features High-Net-Worth Buyers Look For",
+    "status": "scraped",
+    "chunks": "11",
+    "collected_at": "2026-11-19"
+  },
+  {
     "url": "https://darglobal.co.uk/blog/top-luxury-gated-communities",
     "source": "DarGlobal",
     "title": "Luxury Gated Communities: Top Golf & Townhome Picks",
@@ -2820,6 +2828,14 @@
     "collected_at": "2026-11-19"
   },
   {
+    "url": "https://darglobal.co.uk/press/dar-global-expands-saudi-arabia-portfolio-with-new-jeddah-development-valued-at-sar-1-billion",
+    "source": "DarGlobal",
+    "title": "Dar Global Expands Saudi Arabia Portfolio with New Jeddah Development Valued at SAR 1 Billion",
+    "status": "scraped",
+    "chunks": "5",
+    "collected_at": "2026-11-19"
+  },
+  {
     "url": "https://darglobal.co.uk/press/dar-global-introduces-its-unrivalled-debut-luxury-hospitality-project-in-the-maldives-in-partnership-with-dolce-gabbana",
     "source": "DarGlobal",
     "status": "unavailable",
@@ -3266,7 +3282,7 @@
     "source": "DarGlobal",
     "title": "DarGlobal | International Luxury Real Estate Developer",
     "status": "scraped",
-    "chunks": "17",
+    "chunks": "18",
     "collected_at": "2026-11-19"
   },
   {
@@ -3416,7 +3432,7 @@
     "source": "DarGlobal",
     "title": "DarGlobal | International Luxury Real Estate Developer",
     "status": "scraped",
-    "chunks": "17",
+    "chunks": "18",
     "collected_at": "2026-11-19"
   },
   {
@@ -3488,7 +3504,7 @@
     "source": "DarGlobal",
     "title": "DarGlobal | International Luxury Real Estate Developer",
     "status": "scraped",
-    "chunks": "17",
+    "chunks": "18",
     "collected_at": "2026-11-19"
   },
   {
@@ -3604,7 +3620,7 @@
     "source": "DarGlobal",
     "title": "DarGlobal Appoints Ene Construccion Amaz SL as Main Contractor for Tierra Viva – A Luxury Villa Development with Design Inspired by Automobili Lamborghini",
     "status": "scraped",
-    "chunks": "16",
+    "chunks": "15",
     "collected_at": "2026-11-19"
   },
   {
@@ -3720,11 +3736,11 @@
     "collected_at": "2026-11-19"
   },
   {
-    "url": "https://darglobal.co.uk/press/dar-global-expands-saudi-arabia-portfolio-with-new-jeddah-development-valued-at-sar-1-billion",
+    "url": "https://darglobal.co.uk/press/dar-global-trump-organization-successful-launch-trump-international-simaisma-qatar-700-million",
     "source": "DarGlobal",
-    "title": "Dar Global Expands Saudi Arabia Portfolio with New Jeddah Development Valued at SAR 1 Billion",
+    "title": "Dar Global and The Trump Organization Mark Successful Launch of $700M Qatar Destination to International Investors",
     "status": "scraped",
-    "chunks": "5",
+    "chunks": "6",
     "collected_at": "2026-11-19"
   },
   {
@@ -4114,7 +4130,7 @@
     "source": "DarGlobal",
     "title": "DarGlobal | International Luxury Real Estate Developer",
     "status": "scraped",
-    "chunks": "17",
+    "chunks": "18",
     "collected_at": "2026-11-19"
   },
   {
@@ -4160,7 +4176,7 @@
     "source": "DarGlobal",
     "title": "DarGlobal | International Luxury Real Estate Developer",
     "status": "scraped",
-    "chunks": "17",
+    "chunks": "18",
     "collected_at": "2026-11-19"
   },
   {
@@ -4383,14 +4399,6 @@
     "title": "Luxury Fairway Villas in Muscat, Oman - DarGlobal",
     "status": "scraped",
     "chunks": "8",
-    "collected_at": "2026-11-19"
-  },
-  {
-    "url": "https://darglobal.co.uk/blog/top-features-high-net-worth-buyerslook",
-    "source": "DarGlobal",
-    "title": "Top Features High-Net-Worth Buyers Look For",
-    "status": "scraped",
-    "chunks": "11",
     "collected_at": "2026-11-19"
   },
   {
