@@ -75,3 +75,11 @@ def test_source_chunking_preserves_provenance():
     assert chunks
     assert chunks[0]["url"].endswith("/landing-page/aida")
     assert chunks[0]["source"] == "DarGlobal"
+
+
+def test_url_priority_prioritizes_project_pages():
+    from scraper.scrape import SEED_URLS
+
+    urls = SEED_URLS["https://darglobal.co.uk/"]
+    assert "https://darglobal.co.uk/landing-page/aida" in urls
+    assert "https://darglobal.co.uk/tierra-viva" in urls

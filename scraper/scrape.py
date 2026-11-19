@@ -6,8 +6,9 @@ import json
 import sys
 from datetime import date
 from pathlib import Path
+from urllib.parse import urljoin
 from urllib.robotparser import RobotFileParser
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urlparse
 
 import httpx
 from bs4 import BeautifulSoup
@@ -20,6 +21,7 @@ from app.retrieval import chunk_text
 
 ROOT = Path(__file__).resolve().parents[1]
 OUTPUT = ROOT / "data" / "public_sources.json"
+URL_MANIFEST = ROOT / "data" / "source_manifest.json"
 SOURCES = [
     ("DarGlobal", "https://darglobal.co.uk/", ("project", "aida", "tierra-viva", "davinci", "d-villas", "properties", "about", "news")),
     ("Wasalt", "https://wasalt.sa/", ("properties", "sale", "rent", "project", "riyadh", "jeddah")),
@@ -90,21 +92,32 @@ def discover_sitemap_urls(base_url: str) -> list[str]:
         f"{parsed.scheme}://{parsed.host}/sitemap_index.xml",
     ]
     discovered: list[str] = []
-    for root in roots:
+    visited_sitemaps: set[str] = set()
+    sitemap_queue = roots
+    while sitemap_queue:
+        root = sitemap_queue.pop(0)
+        if root in visited_sitemaps:
+            continue
+        visited_sitemaps.add(root)
         fetched = fetch_html(root)
         if not fetched:
             continue
-        html, _ = fetched
-        soup = BeautifulSoup(html, "xml")
+        xml, _ = fetched
+        soup = BeautifulSoup(xml, "xml")
         for location in soup.find_all("loc"):
             url = location.get_text(strip=True)
-            if url:
+            if not url:
+                continue
+            if url.endswith(".xml") or "/sitemap" in url.lower():
+                sitemap_queue.append(url)
+            elif urlparse(url).netloc == parsed.host:
                 discovered.append(url)
     return list(dict.fromkeys(discovered))
 
 
 def scrape() -> list[dict[str, str]]:
     documents: list[dict[str, str]] = []
+    manifest: list[dict[str, str]] = []
     today = date.today().isoformat()
 
     for source, base_url, preferred_terms in SOURCES:
@@ -113,11 +126,23 @@ def scrape() -> list[dict[str, str]]:
         base = urlparse(base_url)
         queue = [base_url]
         queue.extend(SEED_URLS.get(base_url, []))
-        queue.extend(discover_sitemap_urls(base_url))
+        sitemap_urls = discover_sitemap_urls(base_url)
+        def url_priority(url: str) -> tuple[int, str]:
+            low = url.lower()
+            if "/landing-page/" in low or "/tierra-viva" in low or "/aida" in low:
+                return (0, url)
+            if "/projects/" in low or low.rstrip("/").endswith("d-villas-at-jge"):
+                return (1, url)
+            if "/insights/" in low or "/press/" in low or "/blog/" in low:
+                return (2, url)
+            return (3, url)
+
+        queue.extend(sorted(dict.fromkeys(sitemap_urls), key=url_priority))
         visited: set[str] = set()
         crawled = 0
+        max_pages = 300 if source == "DarGlobal" else 200
 
-        while queue and crawled < 60:
+        while queue and crawled < max_pages:
             url = queue.pop(0)
             normalized = url.rstrip("/")
             if normalized in visited:
@@ -125,6 +150,12 @@ def scrape() -> list[dict[str, str]]:
             visited.add(normalized)
             fetched = fetch_html(url)
             if not fetched:
+                manifest.append({
+                    "url": str(url),
+                    "source": source,
+                    "status": "unavailable",
+                    "collected_at": today,
+                })
                 continue
             html, response = fetched
             soup = BeautifulSoup(html, "html.parser")
@@ -140,14 +171,21 @@ def scrape() -> list[dict[str, str]]:
             if len(text) >= 200:
                 documents.extend(chunk_text(text, str(response.url), source, title, today))
                 crawled += 1
+                manifest.append({
+                    "url": str(response.url),
+                    "source": source,
+                    "title": title,
+                    "status": "scraped",
+                    "chunks": str(len(chunk_text(text, str(response.url), source, title, today))),
+                    "collected_at": today,
+                })
 
-            if crawled < 120:
+            if crawled < max_pages:
                 for link in extract_links(soup, str(response.url), base.netloc):
-                    if not any(term in link.lower() for term in preferred_terms):
-                        continue
                     if urlparse(link).scheme in ("http", "https") and link.rstrip("/") not in visited:
                         queue.append(link)
 
+    URL_MANIFEST.write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
     return documents
 
 
