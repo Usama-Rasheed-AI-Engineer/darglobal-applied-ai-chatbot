@@ -34,6 +34,7 @@ def test_aida_property_types_do_not_return_wasalt():
     assert "Wasalt" not in answer
     assert "villas" in answer.lower()
     assert "apartments" in answer.lower()
+    assert "darglobal.co.uk/landing-page/aida" in answer
 
 
 def test_conversation_memory_is_returned_and_capped():
