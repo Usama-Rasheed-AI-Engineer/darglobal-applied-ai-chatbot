@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import os
 import sys
 from datetime import date
 from pathlib import Path
@@ -48,6 +49,7 @@ SEED_URLS = {
     ],
     "https://wasalt.sa/": [
         "https://wasalt.sa/en",
+        "https://wasalt.sa/sitemap.xml",
         "https://wasalt.sa/en/properties-for-sale-in-riyadh",
         "https://wasalt.sa/en/properties-for-rent-in-riyadh",
     ],
@@ -95,6 +97,8 @@ def extract_page_text(html: str) -> tuple[str, str]:
 
 
 def fetch_html(url: str) -> tuple[str, httpx.Response] | None:
+    jina_key = os.getenv("JINA_API_KEY", "").strip()
+    scraperapi_key = os.getenv("SCRAPERAPI_KEY", "").strip()
     try:
         session = Session(impersonate="chrome")
         response = session.get(url, timeout=25, allow_redirects=True)
@@ -114,7 +118,33 @@ def fetch_html(url: str) -> tuple[str, httpx.Response] | None:
         response.raise_for_status()
         return response.text, response
     except httpx.HTTPError:
-        return None
+        pass
+
+    if jina_key:
+        try:
+            response = httpx.get(
+                f"https://r.jina.ai/{url}",
+                headers={"Authorization": f"Bearer {jina_key}", "Accept": "text/plain"},
+                timeout=45,
+            )
+            response.raise_for_status()
+            return response.text, SimpleNamespace(url=url)
+        except httpx.HTTPError:
+            pass
+
+    if scraperapi_key:
+        try:
+            response = httpx.get(
+                "https://api.scraperapi.com/",
+                params={"api_key": scraperapi_key, "url": url},
+                timeout=45,
+            )
+            response.raise_for_status()
+            return response.text, response
+        except httpx.HTTPError:
+            pass
+
+    return None
 
 
 def discover_sitemap_urls(base_url: str) -> list[str]:
@@ -175,12 +205,22 @@ def scrape() -> list[dict[str, str]]:
                 return (1, url)
             if "/insights/" in low or "/press/" in low or "/blog/" in low:
                 return (2, url)
+            if source == "Wasalt":
+                if "/project/" in low or "/property/" in low:
+                    return (0, url)
+                if "/en/villas-" in low or "/en/apartments-" in low or "/en/properties-" in low:
+                    return (1, url)
+                if "/corporate" in low or "/privacy" in low or "/terms" in low:
+                    return (4, url)
             return (3, url)
 
         queue.extend(sorted(dict.fromkeys(sitemap_urls), key=url_priority))
         visited: set[str] = set()
         crawled = 0
-        max_pages = 300 if source == "DarGlobal" else 200
+        max_pages = int(os.getenv(
+            "SCRAPE_MAX_DARGLOBAL" if source == "DarGlobal" else "SCRAPE_MAX_WASALT",
+            "500" if source == "DarGlobal" else "1000",
+        ))
 
         while queue and crawled < max_pages:
             url = queue.pop(0)
