@@ -26,3 +26,11 @@ def test_chat_returns_grounded_answer():
 def test_chat_rejects_empty_message():
     response = client.post("/api/chat", json={"message": " "})
     assert response.status_code == 400
+
+
+def test_aida_property_types_do_not_return_wasalt():
+    response = client.post("/api/chat", json={"message": "What types of properties are available at AIDA?"})
+    answer = response.json()["answer"]
+    assert "Wasalt" not in answer
+    assert "villas" in answer.lower()
+    assert "apartments" in answer.lower()

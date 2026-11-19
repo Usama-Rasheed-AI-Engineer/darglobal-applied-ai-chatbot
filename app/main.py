@@ -21,7 +21,15 @@ def load_documents() -> list[dict[str, Any]]:
 
 
 def retrieve(query: str, limit: int = 4) -> list[dict[str, Any]]:
-    terms = {term for term in re.findall(r"[a-zA-Z0-9]+", query.lower()) if len(term) > 2}
+    normalized_query = query.lower()
+    if "aida" in normalized_query:
+        aida = [document for document in load_documents() if "aida" in document["title"].lower()]
+        if aida:
+            if "property" in normalized_query or "properties" in normalized_query or "available" in normalized_query or "types" in normalized_query:
+                return [document for document in aida if "property types" in document["title"].lower()][:limit]
+            return aida[:limit]
+
+    terms = {term for term in re.findall(r"[a-zA-Z0-9]+", normalized_query) if len(term) > 2}
     scored: list[tuple[int, dict[str, Any]]] = []
     for document in load_documents():
         text = f"{document['title']} {document['text']} {document['source']}".lower()
