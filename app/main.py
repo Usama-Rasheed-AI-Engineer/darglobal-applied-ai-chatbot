@@ -2,7 +2,9 @@ import json
 import os
 import re
 import uuid
+import asyncio
 from collections import OrderedDict
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
@@ -10,12 +12,25 @@ import httpx
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
 
-from app.retrieval import HybridRetriever
+from app.retrieval import HybridRetriever, chunk_text
 
 ROOT = Path(__file__).resolve().parents[1]
 DATA_FILE = ROOT / "data" / "public_sources.json"
 
-app = FastAPI(title="DarGlobal Applied AI Chatbot", version="1.0")
+@asynccontextmanager
+async def lifespan(application: FastAPI):
+    if os.getenv("REFRESH_SOURCES_ON_START", "false").lower() == "true":
+        try:
+            from scraper.scrape import scrape
+            scraped = await asyncio.to_thread(scrape)
+            if scraped:
+                DATA_FILE.write_text(json.dumps(scraped, indent=2, ensure_ascii=False), encoding="utf-8")
+        except Exception as exc:
+            print(f"Source refresh failed; using existing data: {exc}")
+    yield
+
+
+app = FastAPI(title="DarGlobal Applied AI Chatbot", version="1.0", lifespan=lifespan)
 conversations: OrderedDict[str, list[dict[str, str]]] = OrderedDict()
 MAX_CONVERSATION_SESSIONS = 1000
 MAX_MESSAGES = 15
@@ -24,7 +39,21 @@ MAX_MESSAGES = 15
 def load_documents() -> list[dict[str, Any]]:
     if not DATA_FILE.exists():
         return []
-    return json.loads(DATA_FILE.read_text(encoding="utf-8"))
+    raw_documents = json.loads(DATA_FILE.read_text(encoding="utf-8"))
+    chunks: list[dict[str, Any]] = []
+    for document in raw_documents:
+        if document.get("chunk_id"):
+            chunks.append(document)
+            continue
+        document_chunks = chunk_text(
+            document["text"],
+            document["url"],
+            document["source"],
+            document["title"],
+            document["collected_at"],
+        )
+        chunks.extend(document_chunks)
+    return chunks
 
 
 def retrieve(query: str, limit: int = 5, history: list[dict[str, str]] | None = None) -> list[dict[str, Any]]:
@@ -49,6 +78,15 @@ def retrieve(query: str, limit: int = 5, history: list[dict[str, str]] | None = 
             for document in documents
             if project in f"{document.get('title', '')} {document.get('text', '')}".lower()
         ]
+    else:
+        project_phrase = re.search(r"\b(?:at|about)\s+([A-Z][A-Za-z0-9 &-]{2,})(?:\?|$)", query)
+        if project_phrase:
+            project = project_phrase.group(1).strip().lower()
+            documents = [
+                document
+                for document in documents
+                if project in f"{document.get('title', '')} {document.get('text', '')}".lower()
+            ]
     return HybridRetriever(documents).retrieve(query_text, limit)
 
 

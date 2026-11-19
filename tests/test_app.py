@@ -1,6 +1,7 @@
 from fastapi.testclient import TestClient
 
 from app.main import app
+from app.retrieval import chunk_text
 
 client = TestClient(app)
 
@@ -55,3 +56,22 @@ def test_explicit_project_switch_does_not_return_aida():
     answer = second.json()["answer"]
     assert "Tierra Viva" in answer
     assert "AIDA" not in answer
+
+
+def test_unknown_project_does_not_return_another_project():
+    response = client.post("/api/chat", json={"message": "What properties are available at Unknown Project?"})
+    answer = response.json()["answer"].lower()
+    assert "could not find" in answer
+
+
+def test_source_chunking_preserves_provenance():
+    chunks = chunk_text(
+        "AIDA is a gated community. It offers villas and apartments.",
+        "https://darglobal.co.uk/landing-page/aida",
+        "DarGlobal",
+        "AIDA",
+        "2026-11-19",
+    )
+    assert chunks
+    assert chunks[0]["url"].endswith("/landing-page/aida")
+    assert chunks[0]["source"] == "DarGlobal"

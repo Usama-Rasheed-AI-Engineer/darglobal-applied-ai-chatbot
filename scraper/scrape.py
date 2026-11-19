@@ -21,9 +21,23 @@ from app.retrieval import chunk_text
 ROOT = Path(__file__).resolve().parents[1]
 OUTPUT = ROOT / "data" / "public_sources.json"
 SOURCES = [
-    ("DarGlobal", "https://darglobal.co.uk/", ("project", "aida", "properties", "about", "news")),
-    ("Wasalt", "https://wasalt.sa/en", ("properties", "sale", "rent", "project", "riyadh", "jeddah")),
+    ("DarGlobal", "https://darglobal.co.uk/", ("project", "aida", "tierra-viva", "davinci", "d-villas", "properties", "about", "news")),
+    ("Wasalt", "https://wasalt.sa/", ("properties", "sale", "rent", "project", "riyadh", "jeddah")),
 ]
+SEED_URLS = {
+    "https://darglobal.co.uk/": [
+        "https://darglobal.co.uk/landing-page/aida",
+        "https://darglobal.co.uk/tierra-viva",
+        "https://darglobal.co.uk/davinci-tower-by-pagani",
+        "https://darglobal.co.uk/d-villas-at-jge?slug=dg1",
+        "https://darglobal.co.uk/projects/villas",
+    ],
+    "https://wasalt.sa/": [
+        "https://wasalt.sa/en",
+        "https://wasalt.sa/en/properties-for-sale-in-riyadh",
+        "https://wasalt.sa/en/properties-for-rent-in-riyadh",
+    ],
+}
 
 
 def robots_allow(url: str) -> bool:
@@ -91,11 +105,12 @@ def scrape() -> list[dict[str, str]]:
             continue
         base = urlparse(base_url)
         queue = [base_url]
+        queue.extend(SEED_URLS.get(base_url, []))
         queue.extend(discover_sitemap_urls(base_url))
         visited: set[str] = set()
         crawled = 0
 
-        while queue and crawled < 120:
+        while queue and crawled < 60:
             url = queue.pop(0)
             normalized = url.rstrip("/")
             if normalized in visited:
@@ -133,6 +148,7 @@ def main() -> None:
     scraped = scrape()
     if scraped:
         OUTPUT.write_text(json.dumps(scraped, indent=2, ensure_ascii=False), encoding="utf-8")
+        print(f"Saved {len(scraped)} source chunks.")
     else:
         print("No pages were reachable; existing verified seed data was preserved.")
 

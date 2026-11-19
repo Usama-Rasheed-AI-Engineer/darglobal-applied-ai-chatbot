@@ -9,3 +9,5 @@ services:
         sync: false
       - key: OPENROUTER_MODEL
         value: openai/gpt-oss-20b:free
+      - key: REFRESH_SOURCES_ON_START
+        value: "true"
