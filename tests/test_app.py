@@ -43,3 +43,15 @@ def test_conversation_memory_is_returned_and_capped():
     second = client.post("/api/chat", json={"message": "What properties are available there?", "session_id": session_id})
     assert second.status_code == 200
     assert second.json()["session_id"] == session_id
+
+
+def test_explicit_project_switch_does_not_return_aida():
+    first = client.post("/api/chat", json={"message": "Tell me about AIDA"})
+    session_id = first.json()["session_id"]
+    second = client.post(
+        "/api/chat",
+        json={"message": "What types of properties are available at Tierra Viva?", "session_id": session_id},
+    )
+    answer = second.json()["answer"]
+    assert "Tierra Viva" in answer
+    assert "AIDA" not in answer

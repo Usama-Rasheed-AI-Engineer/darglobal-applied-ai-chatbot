@@ -31,11 +31,25 @@ def retrieve(query: str, limit: int = 5, history: list[dict[str, str]] | None = 
     prior_user_text = " ".join(
         message["content"] for message in (history or [])[-10:] if message["role"] == "user"
     )
-    resolved_query = f"{prior_user_text} {query}".strip()
     documents = load_documents()
-    if re.search(r"\baida\b", resolved_query, re.IGNORECASE):
-        documents = [document for document in documents if "aida" in f"{document.get('title', '')} {document.get('text', '')}".lower()]
-    return HybridRetriever(documents).retrieve(resolved_query, limit)
+    query_text = f"{prior_user_text} {query}".strip() if re.search(r"\b(it|there|that|this)\b", query, re.IGNORECASE) else query
+
+    explicit_projects = sorted({
+        project
+        for project in re.findall(
+            r"\b(AIDA|Tierra Viva|Amaya|Trump Tower|W Residences|Venice|Da Vinci|Lucia)\b",
+            query,
+            re.IGNORECASE,
+        )
+    }, key=len, reverse=True)
+    if explicit_projects:
+        project = explicit_projects[0].lower()
+        documents = [
+            document
+            for document in documents
+            if project in f"{document.get('title', '')} {document.get('text', '')}".lower()
+        ]
+    return HybridRetriever(documents).retrieve(query_text, limit)
 
 
 def demo_answer(query: str, documents: list[dict[str, Any]]) -> str:
