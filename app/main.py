@@ -21,10 +21,11 @@ DATA_FILE = ROOT / "data" / "public_sources.json"
 async def lifespan(application: FastAPI):
     if os.getenv("REFRESH_SOURCES_ON_START", "false").lower() == "true":
         try:
-            from scraper.scrape import scrape
+            from scraper.scrape import scrape, merge_sources
             scraped = await asyncio.to_thread(scrape)
             if scraped:
-                DATA_FILE.write_text(json.dumps(scraped, indent=2, ensure_ascii=False), encoding="utf-8")
+                combined = merge_sources(scraped)
+                DATA_FILE.write_text(json.dumps(combined, indent=2, ensure_ascii=False), encoding="utf-8")
         except Exception as exc:
             print(f"Source refresh failed; using existing data: {exc}")
     yield

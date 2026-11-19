@@ -31,6 +31,13 @@ SEED_URLS = {
         "https://darglobal.co.uk/davinci-tower-by-pagani",
         "https://darglobal.co.uk/d-villas-at-jge?slug=dg1",
         "https://darglobal.co.uk/projects/villas",
+        "https://darglobal.co.uk/projects/apartments",
+        "https://darglobal.co.uk/projects/hotel-residences",
+        "https://darglobal.co.uk/projects/collections",
+        "https://darglobal.co.uk/why-invest",
+        "https://darglobal.co.uk/faq",
+        "https://darglobal.co.uk/news",
+        "https://darglobal.co.uk/about",
     ],
     "https://wasalt.sa/": [
         "https://wasalt.sa/en",
@@ -144,11 +151,35 @@ def scrape() -> list[dict[str, str]]:
     return documents
 
 
+def merge_sources(scraped: list[dict[str, str]]) -> list[dict[str, str]]:
+    existing: list[dict[str, str]] = []
+    if OUTPUT.exists():
+        try:
+            existing = json.loads(OUTPUT.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            existing = []
+
+    combined = existing + scraped
+    deduplicated: list[dict[str, str]] = []
+    seen: set[tuple[str, str, str]] = set()
+    for document in combined:
+        key = (
+            document.get("url", "").split("#")[0],
+            document.get("title", ""),
+            document.get("text", "")[:300],
+        )
+        if key not in seen:
+            seen.add(key)
+            deduplicated.append(document)
+    return deduplicated
+
+
 def main() -> None:
     scraped = scrape()
     if scraped:
-        OUTPUT.write_text(json.dumps(scraped, indent=2, ensure_ascii=False), encoding="utf-8")
-        print(f"Saved {len(scraped)} source chunks.")
+        combined = merge_sources(scraped)
+        OUTPUT.write_text(json.dumps(combined, indent=2, ensure_ascii=False), encoding="utf-8")
+        print(f"Saved {len(combined)} source chunks.")
     else:
         print("No pages were reachable; existing verified seed data was preserved.")
 
