@@ -2,8 +2,6 @@ name: Refresh public property data
 
 on:
   workflow_dispatch:
-  repository_dispatch:
-    types: [scrape-sources]
   schedule:
     - cron: "0 */12 * * *"
 
@@ -71,37 +69,7 @@ jobs:
         with:
           path: artifacts
       - name: Merge source databases
-        run: python - <<'PY'
-import json
-from pathlib import Path
-
-output = Path("data/public_sources.json")
-combined = []
-if output.exists():
-    combined.extend(json.loads(output.read_text(encoding="utf-8")))
-
-for file in Path("artifacts").glob("*/public_sources.json"):
-    combined.extend(json.loads(file.read_text(encoding="utf-8")))
-
-deduplicated = []
-seen = set()
-for row in combined:
-    key = (row.get("url", ""), row.get("text", "")[:300])
-    if key not in seen:
-        seen.add(key)
-        deduplicated.append(row)
-output.parent.mkdir(parents=True, exist_ok=True)
-output.write_text(json.dumps(deduplicated, indent=2, ensure_ascii=False), encoding="utf-8")
-
-manifest = []
-for file in Path("artifacts").glob("*/source_manifest.json"):
-    manifest.extend(json.loads(file.read_text(encoding="utf-8")))
-Path("data/source_manifest.json").write_text(
-    json.dumps(manifest, indent=2, ensure_ascii=False),
-    encoding="utf-8",
-)
-print(f"Merged {len(deduplicated)} source rows")
-PY
+        run: python -m scraper.merge_sources
       - name: Commit source database
         run: |
           git config user.name "github-actions[bot]"
