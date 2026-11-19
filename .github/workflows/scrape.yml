@@ -1,0 +1,40 @@
+name: Refresh public property data
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 */12 * * *"
+
+permissions:
+  contents: write
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Crawl DarGlobal and Wasalt sitemaps
+        env:
+          JINA_API_KEY: ${{ secrets.JINA_API_KEY }}
+          SCRAPERAPI_KEY: ${{ secrets.SCRAPERAPI_KEY }}
+          SCRAPE_MAX_DARGLOBAL: "500"
+          SCRAPE_MAX_WASALT: "1000"
+        run: python -m scraper.scrape
+      - name: Commit source database
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/public_sources.json data/source_manifest.json
+          if git diff --cached --quiet; then
+            echo "No source changes"
+          else
+            git diff --cached --stat
+            git commit -m "Refresh public property source data"
+            git push
+          fi

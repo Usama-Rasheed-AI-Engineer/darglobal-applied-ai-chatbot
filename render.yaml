@@ -10,7 +10,7 @@ services:
       - key: OPENROUTER_MODEL
         value: openai/gpt-oss-20b:free
       - key: REFRESH_SOURCES_ON_START
-        value: "true"
+        value: "false"
       - key: JINA_API_KEY
         sync: false
       - key: SCRAPERAPI_KEY

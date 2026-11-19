@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 import os
+import time
 import sys
 from datetime import date
 from pathlib import Path
@@ -236,6 +237,7 @@ def scrape() -> list[dict[str, str]]:
                     "status": "unavailable",
                     "collected_at": today,
                 })
+                time.sleep(float(os.getenv("SCRAPE_REQUEST_DELAY", "0.15")))
                 continue
             html, response = fetched
             soup = BeautifulSoup(html, "html.parser")
@@ -256,6 +258,7 @@ def scrape() -> list[dict[str, str]]:
                     "chunks": str(len(chunk_text(text, str(response.url), source, title, today))),
                     "collected_at": today,
                 })
+                time.sleep(float(os.getenv("SCRAPE_REQUEST_DELAY", "0.15")))
 
             if crawled < max_pages:
                 for link in extract_links(soup, str(response.url), base.netloc):
