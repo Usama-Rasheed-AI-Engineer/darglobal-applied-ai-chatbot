@@ -24,7 +24,7 @@ jobs:
           JINA_API_KEY: ${{ secrets.JINA_API_KEY }}
           SCRAPERAPI_KEY: ${{ secrets.SCRAPERAPI_KEY }}
           SCRAPE_SOURCE: "DarGlobal"
-          SCRAPE_MAX_DARGLOBAL: "500"
+          SCRAPE_MAX_DARGLOBAL: "1500"
           SCRAPE_REQUEST_DELAY: "0"
         run: python -m scraper.scrape
 
@@ -49,7 +49,7 @@ jobs:
           JINA_API_KEY: ${{ secrets.JINA_API_KEY }}
           SCRAPERAPI_KEY: ${{ secrets.SCRAPERAPI_KEY }}
           SCRAPE_SOURCE: "Wasalt"
-          SCRAPE_MAX_WASALT: "1000"
+          SCRAPE_MAX_WASALT: "5000"
           SCRAPE_REQUEST_DELAY: "0"
         run: python -m scraper.scrape
 

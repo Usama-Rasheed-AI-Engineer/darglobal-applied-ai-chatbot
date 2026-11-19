@@ -90,16 +90,19 @@ def retrieve(query: str, limit: int = 5, history: list[dict[str, str]] | None = 
         ]
     else:
         project_phrase = re.search(
-            r"(?:\bat\s+|\bof\s+|\babout\s+)([A-Z][A-Za-z0-9 &'-]{2,})(?:\?|$)",
+            r"(?:\b(?:at|about)\s+([A-Z][A-Za-z0-9 &'-]{2,})(?:\?|$)"
+            r"|\bhistory\s+of\s+([A-Z][A-Za-z0-9 &'-]{2,})(?:\?|$)"
+            r"|\bproperties?\s+(?:available\s+)?(?:at|in)\s+([A-Z][A-Za-z0-9 &'-]{2,})(?:\?|$))",
             query,
         )
         if project_phrase:
-            project = project_phrase.group(1).strip().lower()
-            documents = [
+            project = next(part for part in project_phrase.groups() if part)
+            matching = [
                 document
                 for document in documents
-                if project in f"{document.get('title', '')} {document.get('text', '')}".lower()
+                if project.strip().lower() in f"{document.get('title', '')} {document.get('text', '')}".lower()
             ]
+            documents = matching
     return HybridRetriever(documents).retrieve(query_text, limit)
 
 

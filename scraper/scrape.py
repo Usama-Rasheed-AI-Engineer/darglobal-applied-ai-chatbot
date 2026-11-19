@@ -6,6 +6,7 @@ import json
 import re
 import os
 import time
+import html
 import sys
 from datetime import date
 from pathlib import Path
@@ -175,8 +176,10 @@ def discover_sitemap_urls(base_url: str) -> list[str]:
             )
         except etree.XMLSyntaxError:
             locations = []
+        if not locations:
+            locations = re.findall(r"<loc(?:\s[^>]*)?>(.*?)</loc>", xml, flags=re.IGNORECASE | re.DOTALL)
         for url in locations:
-            url = url.strip()
+            url = html.unescape(url.strip())
             if not url:
                 continue
             if url.endswith(".xml") or "/sitemap" in url.lower():
@@ -223,7 +226,7 @@ def scrape() -> list[dict[str, str]]:
         crawled = 0
         max_pages = int(os.getenv(
             "SCRAPE_MAX_DARGLOBAL" if source == "DarGlobal" else "SCRAPE_MAX_WASALT",
-            "500" if source == "DarGlobal" else "1000",
+            "1500" if source == "DarGlobal" else "5000",
         ))
 
         while queue and crawled < max_pages:
