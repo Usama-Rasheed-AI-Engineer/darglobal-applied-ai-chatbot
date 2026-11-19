@@ -2,6 +2,8 @@ name: Refresh public property data
 
 on:
   workflow_dispatch:
+  repository_dispatch:
+    types: [scrape-sources]
   schedule:
     - cron: "0 */12 * * *"
 
