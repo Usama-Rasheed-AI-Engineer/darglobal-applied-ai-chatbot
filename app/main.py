@@ -168,6 +168,14 @@ async def sources() -> dict[str, list[dict[str, Any]]]:
     return {"sources": load_documents()}
 
 
+@app.get("/api/source-manifest")
+async def source_manifest() -> dict[str, Any]:
+    manifest_file = ROOT / "data" / "source_manifest.json"
+    if not manifest_file.exists():
+        return {"manifest": []}
+    return {"manifest": json.loads(manifest_file.read_text(encoding="utf-8"))}
+
+
 @app.post("/api/chat")
 async def chat(payload: dict[str, str]) -> dict[str, str]:
     query = payload.get("message", "").strip()

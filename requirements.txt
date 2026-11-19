@@ -7,3 +7,6 @@ python-multipart==0.0.20
 pytest==8.3.5
 rank-bm25==0.2.2
 scikit-learn==1.6.1
+curl-cffi==0.13.0
+lxml==6.0.2
+selectolax==0.3.34

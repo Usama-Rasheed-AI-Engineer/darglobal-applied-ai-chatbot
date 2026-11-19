@@ -3,15 +3,20 @@
 from __future__ import annotations
 
 import json
+import re
 import sys
 from datetime import date
 from pathlib import Path
+from types import SimpleNamespace
 from urllib.parse import urljoin
 from urllib.robotparser import RobotFileParser
 from urllib.parse import urlparse
 
 import httpx
 from bs4 import BeautifulSoup
+from curl_cffi.requests import Session
+from lxml import etree
+from selectolax.parser import HTMLParser
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -71,7 +76,34 @@ def extract_links(soup: BeautifulSoup, page_url: str, allowed_host: str) -> list
     return list(dict.fromkeys(links))
 
 
+def extract_page_text(html: str) -> tuple[str, str]:
+    parser = HTMLParser(html)
+    for tag in ("script", "style", "nav", "footer", "noscript", "svg"):
+        for node in parser.css(tag):
+            node.decompose()
+
+    main = parser.css_first("main")
+    article = parser.css_first("article")
+    body = parser.css_first("body")
+    root = main or article or body
+    text = root.text(separator=" ", strip=True) if root else ""
+
+    title_node = parser.css_first("title")
+    heading_node = parser.css_first("h1")
+    title = title_node.text(strip=True) if title_node else heading_node.text(strip=True) if heading_node else ""
+    return re.sub(r"\s+", " ", text).strip(), re.sub(r"\s+", " ", title).strip()
+
+
 def fetch_html(url: str) -> tuple[str, httpx.Response] | None:
+    try:
+        session = Session(impersonate="chrome")
+        response = session.get(url, timeout=25, allow_redirects=True)
+        if response.status_code >= 400:
+            raise httpx.HTTPError(f"{response.status_code}")
+        final_url = str(response.url)
+        return response.text, SimpleNamespace(url=final_url)
+    except Exception:
+        pass
     try:
         response = httpx.get(
             url,
@@ -103,9 +135,17 @@ def discover_sitemap_urls(base_url: str) -> list[str]:
         if not fetched:
             continue
         xml, _ = fetched
-        soup = BeautifulSoup(xml, "xml")
-        for location in soup.find_all("loc"):
-            url = location.get_text(strip=True)
+        try:
+            root = etree.fromstring(xml.encode("utf-8"))
+            locations = root.xpath(
+                "//*[local-name()='url']/*[local-name()='loc']/text()"
+                " | "
+                "//*[local-name()='sitemap']/*[local-name()='loc']/text()"
+            )
+        except etree.XMLSyntaxError:
+            locations = []
+        for url in locations:
+            url = url.strip()
             if not url:
                 continue
             if url.endswith(".xml") or "/sitemap" in url.lower():
@@ -162,12 +202,9 @@ def scrape() -> list[dict[str, str]]:
             for tag in soup(["script", "style", "nav", "footer", "noscript", "svg"]):
                 tag.decompose()
 
-            title_tag = soup.find("title")
-            heading_tag = soup.find(["h1", "h2"])
-            title = title_tag.get_text(" ", strip=True) if title_tag else heading_tag.get_text(" ", strip=True) if heading_tag else f"{source} public page"
-
-            content_root = soup.find("main") or soup.find("article") or soup.find("body")
-            text = " ".join(content_root.stripped_strings) if content_root else ""
+            extracted_text, extracted_title = extract_page_text(html)
+            title = extracted_title or f"{source} public page"
+            text = extracted_text
             if len(text) >= 200:
                 documents.extend(chunk_text(text, str(response.url), source, title, today))
                 crawled += 1

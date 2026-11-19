@@ -83,3 +83,9 @@ def test_url_priority_prioritizes_project_pages():
     urls = SEED_URLS["https://darglobal.co.uk/"]
     assert "https://darglobal.co.uk/landing-page/aida" in urls
     assert "https://darglobal.co.uk/tierra-viva" in urls
+
+
+def test_source_manifest_endpoint():
+    response = client.get("/api/source-manifest")
+    assert response.status_code == 200
+    assert "manifest" in response.json()
