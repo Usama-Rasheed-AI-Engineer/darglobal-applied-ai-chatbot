@@ -89,3 +89,14 @@ def test_source_manifest_endpoint():
     response = client.get("/api/source-manifest")
     assert response.status_code == 200
     assert "manifest" in response.json()
+
+
+def test_albert_mansions_history_uses_official_source():
+    response = client.post(
+        "/api/chat",
+        json={"message": "What is the history of Albert Hall Mansions?"},
+    )
+    answer = response.json()["answer"]
+    assert "Richard Norman Shaw" in answer
+    assert "Tierra Viva" not in answer
+    assert "darglobal.co.uk/one-of-one/THE-ALBERT-HALL-MANSION" in answer

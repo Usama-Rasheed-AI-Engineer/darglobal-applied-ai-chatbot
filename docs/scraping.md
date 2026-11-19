@@ -20,3 +20,5 @@ Configure Render environment variables:
 - `SCRAPE_MAX_WASALT=1000`
 
 Never commit API keys to source files or repository configuration. Store both keys as Render secret environment variables. Rotate a key if it was pasted into chat or another untrusted location.
+
+Because a key can be exposed in a conversation, rotate both keys in their provider dashboards after deployment setup. Create separate keys for Jina and ScraperAPI, then replace the Render secret values.

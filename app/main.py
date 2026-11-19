@@ -64,14 +64,23 @@ def retrieve(query: str, limit: int = 5, history: list[dict[str, str]] | None = 
     documents = load_documents()
     query_text = f"{prior_user_text} {query}".strip() if re.search(r"\b(it|there|that|this)\b", query, re.IGNORECASE) else query
 
-    explicit_projects = sorted({
-        project
-        for project in re.findall(
-            r"\b(AIDA|Tierra Viva|Amaya|Trump Tower|W Residences|Venice|Da Vinci|Lucia)\b",
-            query,
-            re.IGNORECASE,
-        )
-    }, key=len, reverse=True)
+    project_aliases = (
+        "AIDA",
+        "Tierra Viva",
+        "Albert Hall Mansions",
+        "Amaya",
+        "Trump Tower Jeddah",
+        "Trump International",
+        "W Residences",
+        "Da Vinci Tower",
+        "Davinci",
+        "DG Villas",
+    )
+    explicit_projects = sorted(
+        {alias for alias in project_aliases if re.search(re.escape(alias), query, re.IGNORECASE)},
+        key=len,
+        reverse=True,
+    )
     if explicit_projects:
         project = explicit_projects[0].lower()
         documents = [
@@ -80,7 +89,10 @@ def retrieve(query: str, limit: int = 5, history: list[dict[str, str]] | None = 
             if project in f"{document.get('title', '')} {document.get('text', '')}".lower()
         ]
     else:
-        project_phrase = re.search(r"\b(?:at|about)\s+([A-Z][A-Za-z0-9 &-]{2,})(?:\?|$)", query)
+        project_phrase = re.search(
+            r"(?:\bat\s+|\bof\s+|\babout\s+)([A-Z][A-Za-z0-9 &'-]{2,})(?:\?|$)",
+            query,
+        )
         if project_phrase:
             project = project_phrase.group(1).strip().lower()
             documents = [
@@ -115,6 +127,8 @@ async def openrouter_answer(
     documents: list[dict[str, Any]],
     history: list[dict[str, str]],
 ) -> str:
+    if not documents:
+        return demo_answer(query, [])
     api_key = os.getenv("OPENROUTER_API_KEY")
     if not api_key:
         return demo_answer(query, documents)
