@@ -34,3 +34,11 @@ def test_aida_property_types_do_not_return_wasalt():
     assert "Wasalt" not in answer
     assert "villas" in answer.lower()
     assert "apartments" in answer.lower()
+
+
+def test_conversation_memory_is_returned_and_capped():
+    first = client.post("/api/chat", json={"message": "Tell me about AIDA"})
+    session_id = first.json()["session_id"]
+    second = client.post("/api/chat", json={"message": "What properties are available there?", "session_id": session_id})
+    assert second.status_code == 200
+    assert second.json()["session_id"] == session_id

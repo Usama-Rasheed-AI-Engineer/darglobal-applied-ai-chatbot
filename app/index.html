@@ -33,6 +33,7 @@
     const chat = document.getElementById('chat');
     const form = document.getElementById('form');
     const input = document.getElementById('message');
+    const sessionId = crypto.randomUUID();
     function add(text, role) {
       const node = document.createElement('div');
       node.className = `message ${role}`;
@@ -51,7 +52,7 @@
         const response = await fetch('/api/chat', {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({message})
+          body: JSON.stringify({message, session_id: sessionId})
         });
         const payload = await response.json();
         chat.lastElementChild.remove();

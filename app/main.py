@@ -1,6 +1,8 @@
 import json
 import os
 import re
+import uuid
+from collections import OrderedDict
 from pathlib import Path
 from typing import Any
 
@@ -8,10 +10,15 @@ import httpx
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
 
+from app.retrieval import HybridRetriever
+
 ROOT = Path(__file__).resolve().parents[1]
 DATA_FILE = ROOT / "data" / "public_sources.json"
 
 app = FastAPI(title="DarGlobal Applied AI Chatbot", version="1.0")
+conversations: OrderedDict[str, list[dict[str, str]]] = OrderedDict()
+MAX_CONVERSATION_SESSIONS = 1000
+MAX_MESSAGES = 15
 
 
 def load_documents() -> list[dict[str, Any]]:
@@ -20,24 +27,15 @@ def load_documents() -> list[dict[str, Any]]:
     return json.loads(DATA_FILE.read_text(encoding="utf-8"))
 
 
-def retrieve(query: str, limit: int = 4) -> list[dict[str, Any]]:
-    normalized_query = query.lower()
-    if "aida" in normalized_query:
-        aida = [document for document in load_documents() if "aida" in document["title"].lower()]
-        if aida:
-            if "property" in normalized_query or "properties" in normalized_query or "available" in normalized_query or "types" in normalized_query:
-                return [document for document in aida if "property types" in document["title"].lower()][:limit]
-            return aida[:limit]
-
-    terms = {term for term in re.findall(r"[a-zA-Z0-9]+", normalized_query) if len(term) > 2}
-    scored: list[tuple[int, dict[str, Any]]] = []
-    for document in load_documents():
-        text = f"{document['title']} {document['text']} {document['source']}".lower()
-        score = sum(1 for term in terms if term in text)
-        if score:
-            scored.append((score, document))
-    scored.sort(key=lambda item: item[0], reverse=True)
-    return [document for _, document in scored[:limit]]
+def retrieve(query: str, limit: int = 5, history: list[dict[str, str]] | None = None) -> list[dict[str, Any]]:
+    prior_user_text = " ".join(
+        message["content"] for message in (history or [])[-10:] if message["role"] == "user"
+    )
+    resolved_query = f"{prior_user_text} {query}".strip()
+    documents = load_documents()
+    if re.search(r"\baida\b", resolved_query, re.IGNORECASE):
+        documents = [document for document in documents if "aida" in f"{document.get('title', '')} {document.get('text', '')}".lower()]
+    return HybridRetriever(documents).retrieve(resolved_query, limit)
 
 
 def demo_answer(query: str, documents: list[dict[str, Any]]) -> str:
@@ -59,7 +57,11 @@ def demo_answer(query: str, documents: list[dict[str, Any]]) -> str:
     )
 
 
-async def openrouter_answer(query: str, documents: list[dict[str, Any]]) -> str:
+async def openrouter_answer(
+    query: str,
+    documents: list[dict[str, Any]],
+    history: list[dict[str, str]],
+) -> str:
     api_key = os.getenv("OPENROUTER_API_KEY")
     if not api_key:
         return demo_answer(query, documents)
@@ -68,19 +70,22 @@ async def openrouter_answer(query: str, documents: list[dict[str, Any]]) -> str:
         f"Title: {document['title']}\nURL: {document['url']}\nContent: {document['text']}"
         for document in documents
     )
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "Answer only from the provided public sources and recent conversation. "
+                "Cite source titles and URLs. If the sources do not support an answer, "
+                "say that it is unknown. Never invent prices, availability, unit counts, "
+                "handover dates, or legal information."
+            ),
+        },
+        *history,
+        {"role": "user", "content": f"Question: {query}\n\nSources:\n{context}"},
+    ]
     payload = {
         "model": os.getenv("OPENROUTER_MODEL", "openai/gpt-oss-20b:free"),
-        "messages": [
-            {
-                "role": "system",
-                "content": (
-                    "Answer only from the provided public sources. Cite source titles and URLs. "
-                    "If the sources do not support an answer, say that it is unknown. "
-                    "Never invent prices, availability, unit counts, or legal information."
-                ),
-            },
-            {"role": "user", "content": f"Question: {query}\n\nSources:\n{context}"},
-        ],
+        "messages": messages,
         "temperature": 0.2,
     }
     try:
@@ -117,9 +122,22 @@ async def chat(payload: dict[str, str]) -> dict[str, str]:
         raise HTTPException(status_code=400, detail="Message is required")
     if len(query) > 1000:
         raise HTTPException(status_code=400, detail="Message is too long")
-    documents = retrieve(query)
-    answer = await openrouter_answer(query, documents)
-    return {"answer": answer}
+
+    session_id = payload.get("session_id", "").strip() or str(uuid.uuid4())
+    history = conversations.pop(session_id, [])
+    documents = retrieve(query, history=history)
+    answer = await openrouter_answer(query, documents, history)
+
+    history.extend([
+        {"role": "user", "content": query},
+        {"role": "assistant", "content": answer},
+    ])
+    history = history[-MAX_MESSAGES:]
+    conversations[session_id] = history
+    if len(conversations) > MAX_CONVERSATION_SESSIONS:
+        conversations.popitem(last=False)
+
+    return {"answer": answer, "session_id": session_id}
 
 
 @app.get("/", response_class=HTMLResponse)
