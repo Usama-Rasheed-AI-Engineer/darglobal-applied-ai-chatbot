@@ -16,39 +16,44 @@ from app.retrieval import HybridRetriever, QdrantHybridRetriever, chunk_text
 
 ROOT = Path(__file__).resolve().parents[1]
 DATA_FILE = ROOT / "data" / "public_sources.json"
+ENRICHED_FILE = ROOT / "data" / "enriched_rag_data.jsonl"
 QDRANT_DIR = ROOT / "qdrant_db"
 
 qdrant_retriever: QdrantHybridRetriever | None = None
-
-
-@asynccontextmanager
-async def lifespan(application: FastAPI):
-    global qdrant_retriever
-    if QDRANT_DIR.exists():
-        qdrant_retriever = await asyncio.to_thread(QdrantHybridRetriever, QDRANT_DIR)
-    elif os.getenv("REFRESH_SOURCES_ON_START", "false").lower() == "true":
-        try:
-            from scraper.scrape import merge_sources, scrape
-
-            scraped = await asyncio.to_thread(scrape)
-            if scraped:
-                combined = merge_sources(scraped)
-                DATA_FILE.write_text(json.dumps(combined, indent=2, ensure_ascii=False), encoding="utf-8")
-        except Exception as exc:
-            print(f"Source refresh failed; using existing data: {exc}")
-    yield
-    if qdrant_retriever is not None:
-        qdrant_retriever.close()
-        qdrant_retriever = None
-
-
-app = FastAPI(title="DarGlobal Applied AI Chatbot", version="1.0", lifespan=lifespan)
-conversations: OrderedDict[str, list[dict[str, str]]] = OrderedDict()
-MAX_CONVERSATION_SESSIONS = 1000
-MAX_MESSAGES = 15
+lexical_retriever: HybridRetriever | None = None
 
 
 def load_documents() -> list[dict[str, Any]]:
+    if ENRICHED_FILE.exists():
+        docs: list[dict[str, Any]] = []
+        with ENRICHED_FILE.open("r", encoding="utf-8") as f:
+            for line in f:
+                if not line.strip():
+                    continue
+                rec = json.loads(line)
+                meta = rec.get("metadata", {})
+                url = meta.get("source_url") or rec.get("source_url") or rec.get("url", "")
+                title = meta.get("title") or rec.get("title") or url or "DarGlobal / Wasalt Source"
+                platform = meta.get("platform") or rec.get("platform") or rec.get("source", "")
+                scraped = meta.get("last_scraped") or rec.get("last_scraped") or rec.get("collected_at", "")
+                source_type = meta.get("source_type") or rec.get("source_type", "general_page")
+                policy_status = meta.get("policy_status") or rec.get("policy_status", "active")
+                countries = meta.get("countries") or rec.get("countries", "Unspecified")
+
+                for piece in chunk_text(
+                    rec.get("text", ""),
+                    url=url,
+                    source=platform,
+                    title=title,
+                    collected_at=scraped,
+                ):
+                    piece["source_type"] = source_type
+                    piece["policy_status"] = policy_status
+                    piece["countries"] = countries
+                    docs.append(piece)
+        if docs:
+            return docs
+
     if not DATA_FILE.exists():
         return []
     raw_documents = json.loads(DATA_FILE.read_text(encoding="utf-8"))
@@ -68,7 +73,41 @@ def load_documents() -> list[dict[str, Any]]:
     return chunks
 
 
-def retrieve(query: str, limit: int = 5, history: list[dict[str, str]] | None = None) -> list[dict[str, Any]]:
+@asynccontextmanager
+async def lifespan(application: FastAPI):
+    global qdrant_retriever, lexical_retriever
+    use_dense = os.getenv("ENABLE_DENSE_QUERY", "true").lower() == "true"
+
+    if use_dense and QDRANT_DIR.exists():
+        qdrant_retriever = await asyncio.to_thread(QdrantHybridRetriever, QDRANT_DIR)
+    else:
+        if os.getenv("REFRESH_SOURCES_ON_START", "false").lower() == "true":
+            try:
+                from scraper.scrape import merge_sources, scrape
+
+                scraped = await asyncio.to_thread(scrape)
+                if scraped:
+                    combined = merge_sources(scraped)
+                    DATA_FILE.write_text(json.dumps(combined, indent=2, ensure_ascii=False), encoding="utf-8")
+            except Exception as exc:
+                print(f"Source refresh failed; using existing data: {exc}")
+        docs = await asyncio.to_thread(load_documents)
+        lexical_retriever = await asyncio.to_thread(HybridRetriever, docs)
+
+    yield
+
+    if qdrant_retriever is not None:
+        qdrant_retriever.close()
+        qdrant_retriever = None
+
+
+app = FastAPI(title="DarGlobal Applied AI Chatbot", version="1.0", lifespan=lifespan)
+conversations: OrderedDict[str, list[dict[str, str]]] = OrderedDict()
+MAX_CONVERSATION_SESSIONS = 1000
+MAX_MESSAGES = 15
+
+
+def retrieve(query: str, limit: int = 6, history: list[dict[str, str]] | None = None) -> list[dict[str, Any]]:
     prior_user_text = " ".join(
         message["content"] for message in (history or [])[-6:] if message["role"] == "user"
     )
@@ -80,9 +119,10 @@ def retrieve(query: str, limit: int = 5, history: list[dict[str, str]] | None = 
 
     if qdrant_retriever is not None:
         return qdrant_retriever.retrieve(query_text, limit=limit)
+    if lexical_retriever is not None:
+        return lexical_retriever.retrieve(query_text, limit=limit)
 
-    documents = load_documents()
-    return HybridRetriever(documents).retrieve(query_text, limit)
+    return HybridRetriever(load_documents()).retrieve(query_text, limit)
 
 
 def demo_answer(query: str, documents: list[dict[str, Any]]) -> str:
@@ -178,16 +218,22 @@ async def openrouter_answer(
 
 @app.get("/health")
 async def health() -> dict[str, str]:
-    doc_count = qdrant_retriever.count() if qdrant_retriever is not None else len(load_documents())
-    return {
-        "status": "healthy",
-        "documents": str(doc_count),
-        "retriever": "qdrant_hybrid" if qdrant_retriever is not None else "tfidf_bm25",
-    }
+    if qdrant_retriever is not None:
+        doc_count = qdrant_retriever.count()
+        mode = "qdrant_dense_sparse"
+    elif lexical_retriever is not None:
+        doc_count = len(lexical_retriever.documents)
+        mode = "enriched_bm25_tfidf"
+    else:
+        doc_count = len(load_documents())
+        mode = "fallback"
+    return {"status": "healthy", "documents": str(doc_count), "retriever": mode}
 
 
 @app.get("/api/sources")
 async def sources() -> dict[str, list[dict[str, Any]]]:
+    if lexical_retriever is not None:
+        return {"sources": lexical_retriever.documents[:200]}
     return {"sources": load_documents()[:200]}
 
 
@@ -209,7 +255,7 @@ async def chat(payload: dict[str, str]) -> dict[str, str]:
 
     session_id = payload.get("session_id", "").strip() or str(uuid.uuid4())
     history = conversations.pop(session_id, [])
-    documents = await asyncio.to_thread(retrieve, query, 5, history)
+    documents = await asyncio.to_thread(retrieve, query, 6, history)
     answer = await openrouter_answer(query, documents, history)
 
     history.extend([

@@ -9,7 +9,7 @@ from rank_bm25 import BM25Okapi
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 
-TOKEN_RE = re.compile(r"[a-z0-9]+")
+TOKEN_RE = re.compile(r"[\w\u0600-\u06FF]+", re.UNICODE)
 
 
 def tokenize(text: str) -> list[str]:
@@ -61,18 +61,25 @@ def chunk_text(
 
 
 class HybridRetriever:
-    def __init__(self, documents: Iterable[dict[str, str]]):
+    """Low-memory bilingual (English + Arabic) BM25 + TF-IDF Reciprocal Rank Fusion retriever."""
+
+    def __init__(self, documents: Iterable[dict[str, Any]]):
         self.documents = list(documents)
         self.corpus = [
-            f"{document['title']} {document['text']} {document.get('source', '')}"
+            f"{document.get('title', '')} {document.get('text', '')} {document.get('countries', '')}"
             for document in self.documents
         ]
         tokenized = [tokenize(text) for text in self.corpus]
         self.bm25 = BM25Okapi(tokenized) if tokenized else None
-        self.vectorizer = TfidfVectorizer(ngram_range=(1, 2), stop_words="english", sublinear_tf=True)
+        self.vectorizer = TfidfVectorizer(
+            ngram_range=(1, 2),
+            max_features=35000,
+            sublinear_tf=True,
+            token_pattern=r"(?u)\b[\w\u0600-\u06FF]+\b",
+        )
         self.tfidf = self.vectorizer.fit_transform(self.corpus) if self.corpus else None
 
-    def retrieve(self, query: str, limit: int = 5) -> list[dict[str, str]]:
+    def retrieve(self, query: str, limit: int = 6) -> list[dict[str, Any]]:
         if not self.documents:
             return []
 
@@ -88,17 +95,20 @@ class HybridRetriever:
         tfidf_order = sorted(range(len(self.documents)), key=lambda i: tfidf_scores[i], reverse=True)
 
         reciprocal: dict[int, float] = {}
-        for rank, index in enumerate(bm25_order[:50], start=1):
+        for rank, index in enumerate(bm25_order[:60], start=1):
             reciprocal[index] = reciprocal.get(index, 0.0) + 1.0 / (60 + rank)
-        for rank, index in enumerate(tfidf_order[:50], start=1):
+        for rank, index in enumerate(tfidf_order[:60], start=1):
             reciprocal[index] = reciprocal.get(index, 0.0) + 1.0 / (60 + rank)
 
         reranked: list[tuple[float, int]] = []
         for index, document in enumerate(self.documents):
-            text = f"{document['title']} {document['text']}".lower()
-            exact_boost = sum(1 for term in terms if term in text)
-            title_boost = sum(1 for term in terms if term in document["title"].lower())
-            score = reciprocal.get(index, 0.0) + 0.015 * exact_boost + 0.025 * title_boost
+            title_lower = document.get("title", "").lower()
+            text_lower = f"{title_lower} {document.get('text', '').lower()}"
+            exact_boost = sum(1 for term in terms if term in text_lower)
+            title_boost = sum(1 for term in terms if term in title_lower)
+            source_type = document.get("source_type", "general_page")
+            authority_boost = 0.015 if source_type in ("project_page", "platform_listing", "general_page") else 0.0
+            score = reciprocal.get(index, 0.0) + 0.015 * exact_boost + 0.025 * title_boost + authority_boost
             reranked.append((score, index))
 
         reranked.sort(key=lambda item: item[0], reverse=True)
@@ -106,22 +116,17 @@ class HybridRetriever:
 
 
 class QdrantHybridRetriever:
-    """Qdrant retriever supporting full Dense+Sparse RRF locally and low-RAM Sparse mode on 512MB cloud tiers."""
+    """Full Dense (multilingual-e5-large) + Sparse (BM25) Qdrant RRF retriever for local/high-RAM hosts."""
 
     def __init__(self, db_path: str | Path = "./qdrant_db", collection_name: str = "darglobal_wasalt"):
-        from fastembed import SparseTextEmbedding
+        from fastembed import SparseTextEmbedding, TextEmbedding
         from qdrant_client import QdrantClient
 
         self.db_path = str(db_path)
         self.collection_name = collection_name
+        self.dense_model = TextEmbedding(model_name="intfloat/multilingual-e5-large")
         self.sparse_model = SparseTextEmbedding(model_name="Qdrant/bm25")
         self.client = QdrantClient(path=self.db_path)
-
-        self.dense_model = None
-        if os.getenv("ENABLE_DENSE_QUERY", "true").lower() == "true":
-            from fastembed import TextEmbedding
-
-            self.dense_model = TextEmbedding(model_name="intfloat/multilingual-e5-large")
 
     def count(self) -> int:
         if not self.client.collection_exists(self.collection_name):
@@ -134,51 +139,40 @@ class QdrantHybridRetriever:
         except Exception:
             pass
 
-    def retrieve(self, query: str, limit: int = 5) -> list[dict[str, Any]]:
+    def retrieve(self, query: str, limit: int = 6) -> list[dict[str, Any]]:
         from qdrant_client import models
 
         if not self.client.collection_exists(self.collection_name):
             return []
 
+        dense_vec = next(self.dense_model.query_embed([query])).tolist()
         sparse_vec = next(self.sparse_model.embed([query]))
         sparse_query = models.SparseVector(
             indices=sparse_vec.indices.tolist(),
             values=sparse_vec.values.tolist(),
         )
-        dense_vec = next(self.dense_model.query_embed([query])).tolist() if self.dense_model is not None else None
 
         def _search_bucket(allowed_types: list[str], top_k: int):
-            source_filter = models.Filter(
-                must=[
-                    models.FieldCondition(
-                        key="source_type",
-                        match=models.MatchAny(any=allowed_types),
-                    )
-                ]
-            )
-            if dense_vec is not None:
-                return self.client.query_points(
-                    collection_name=self.collection_name,
-                    prefetch=[
-                        models.Prefetch(query=dense_vec, using="dense", limit=20),
-                        models.Prefetch(query=sparse_query, using="sparse", limit=20),
-                    ],
-                    query=models.FusionQuery(fusion=models.Fusion.RRF),
-                    query_filter=source_filter,
-                    limit=top_k,
-                    with_payload=True,
-                ).points
-
             return self.client.query_points(
                 collection_name=self.collection_name,
-                query=sparse_query,
-                using="sparse",
-                query_filter=source_filter,
+                prefetch=[
+                    models.Prefetch(query=dense_vec, using="dense", limit=20),
+                    models.Prefetch(query=sparse_query, using="sparse", limit=20),
+                ],
+                query=models.FusionQuery(fusion=models.Fusion.RRF),
+                query_filter=models.Filter(
+                    must=[
+                        models.FieldCondition(
+                            key="source_type",
+                            match=models.MatchAny(any=allowed_types),
+                        )
+                    ]
+                ),
                 limit=top_k,
                 with_payload=True,
             ).points
 
-        primary_hits = _search_bucket(["project_page", "platform_listing", "general_page"], max(3, limit - 2))
+        primary_hits = _search_bucket(["project_page", "platform_listing", "general_page"], max(4, limit - 2))
         secondary_hits = _search_bucket(["blog_or_press"], 2)
 
         seen: set[tuple[str, Any]] = set()
