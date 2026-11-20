@@ -8,14 +8,8 @@ services:
       - key: OPENROUTER_API_KEY
         sync: false
       - key: OPENROUTER_MODEL
-        value: openai/gpt-oss-20b:free
+        value: openrouter/free
+      - key: ENABLE_DENSE_QUERY
+        value: "false"
       - key: REFRESH_SOURCES_ON_START
         value: "false"
-      - key: JINA_API_KEY
-        sync: false
-      - key: SCRAPERAPI_KEY
-        sync: false
-      - key: SCRAPE_MAX_DARGLOBAL
-        value: "500"
-      - key: SCRAPE_MAX_WASALT
-        value: "1000"

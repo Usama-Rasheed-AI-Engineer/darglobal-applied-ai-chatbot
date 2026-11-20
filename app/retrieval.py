@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-import math
+import os
 import re
 from pathlib import Path
-from typing import Iterable
+from typing import Any, Iterable
 
-import json
 from rank_bm25 import BM25Okapi
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
@@ -104,3 +103,107 @@ class HybridRetriever:
 
         reranked.sort(key=lambda item: item[0], reverse=True)
         return [self.documents[index] for _, index in reranked[:limit]]
+
+
+class QdrantHybridRetriever:
+    """Qdrant retriever supporting full Dense+Sparse RRF locally and low-RAM Sparse mode on 512MB cloud tiers."""
+
+    def __init__(self, db_path: str | Path = "./qdrant_db", collection_name: str = "darglobal_wasalt"):
+        from fastembed import SparseTextEmbedding
+        from qdrant_client import QdrantClient
+
+        self.db_path = str(db_path)
+        self.collection_name = collection_name
+        self.sparse_model = SparseTextEmbedding(model_name="Qdrant/bm25")
+        self.client = QdrantClient(path=self.db_path)
+
+        self.dense_model = None
+        if os.getenv("ENABLE_DENSE_QUERY", "true").lower() == "true":
+            from fastembed import TextEmbedding
+
+            self.dense_model = TextEmbedding(model_name="intfloat/multilingual-e5-large")
+
+    def count(self) -> int:
+        if not self.client.collection_exists(self.collection_name):
+            return 0
+        return self.client.count(collection_name=self.collection_name).count
+
+    def close(self) -> None:
+        try:
+            self.client.close()
+        except Exception:
+            pass
+
+    def retrieve(self, query: str, limit: int = 5) -> list[dict[str, Any]]:
+        from qdrant_client import models
+
+        if not self.client.collection_exists(self.collection_name):
+            return []
+
+        sparse_vec = next(self.sparse_model.embed([query]))
+        sparse_query = models.SparseVector(
+            indices=sparse_vec.indices.tolist(),
+            values=sparse_vec.values.tolist(),
+        )
+        dense_vec = next(self.dense_model.query_embed([query])).tolist() if self.dense_model is not None else None
+
+        def _search_bucket(allowed_types: list[str], top_k: int):
+            source_filter = models.Filter(
+                must=[
+                    models.FieldCondition(
+                        key="source_type",
+                        match=models.MatchAny(any=allowed_types),
+                    )
+                ]
+            )
+            if dense_vec is not None:
+                return self.client.query_points(
+                    collection_name=self.collection_name,
+                    prefetch=[
+                        models.Prefetch(query=dense_vec, using="dense", limit=20),
+                        models.Prefetch(query=sparse_query, using="sparse", limit=20),
+                    ],
+                    query=models.FusionQuery(fusion=models.Fusion.RRF),
+                    query_filter=source_filter,
+                    limit=top_k,
+                    with_payload=True,
+                ).points
+
+            return self.client.query_points(
+                collection_name=self.collection_name,
+                query=sparse_query,
+                using="sparse",
+                query_filter=source_filter,
+                limit=top_k,
+                with_payload=True,
+            ).points
+
+        primary_hits = _search_bucket(["project_page", "platform_listing", "general_page"], max(3, limit - 2))
+        secondary_hits = _search_bucket(["blog_or_press"], 2)
+
+        seen: set[tuple[str, Any]] = set()
+        results: list[dict[str, Any]] = []
+        for hit in list(primary_hits) + list(secondary_hits):
+            payload = hit.payload or {}
+            url = payload.get("source_url", "")
+            dedup_key = (url, payload.get("chunk_index"))
+            if dedup_key in seen:
+                continue
+            seen.add(dedup_key)
+
+            results.append(
+                {
+                    "title": payload.get("title") or url or "DarGlobal / Wasalt Source",
+                    "text": payload.get("text", ""),
+                    "url": url,
+                    "source": payload.get("platform", ""),
+                    "source_type": payload.get("source_type", "general_page"),
+                    "policy_status": payload.get("policy_status", "active"),
+                    "countries": payload.get("countries", "Unspecified"),
+                    "collected_at": payload.get("last_scraped", ""),
+                }
+            )
+            if len(results) >= limit:
+                break
+
+        return results

@@ -1,8 +1,8 @@
+import asyncio
 import json
 import os
 import re
 import uuid
-import asyncio
 from collections import OrderedDict
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -12,16 +12,24 @@ import httpx
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
 
-from app.retrieval import HybridRetriever, chunk_text
+from app.retrieval import HybridRetriever, QdrantHybridRetriever, chunk_text
 
 ROOT = Path(__file__).resolve().parents[1]
 DATA_FILE = ROOT / "data" / "public_sources.json"
+QDRANT_DIR = ROOT / "qdrant_db"
+
+qdrant_retriever: QdrantHybridRetriever | None = None
+
 
 @asynccontextmanager
 async def lifespan(application: FastAPI):
-    if os.getenv("REFRESH_SOURCES_ON_START", "false").lower() == "true":
+    global qdrant_retriever
+    if QDRANT_DIR.exists():
+        qdrant_retriever = await asyncio.to_thread(QdrantHybridRetriever, QDRANT_DIR)
+    elif os.getenv("REFRESH_SOURCES_ON_START", "false").lower() == "true":
         try:
-            from scraper.scrape import scrape, merge_sources
+            from scraper.scrape import merge_sources, scrape
+
             scraped = await asyncio.to_thread(scrape)
             if scraped:
                 combined = merge_sources(scraped)
@@ -29,6 +37,9 @@ async def lifespan(application: FastAPI):
         except Exception as exc:
             print(f"Source refresh failed; using existing data: {exc}")
     yield
+    if qdrant_retriever is not None:
+        qdrant_retriever.close()
+        qdrant_retriever = None
 
 
 app = FastAPI(title="DarGlobal Applied AI Chatbot", version="1.0", lifespan=lifespan)
@@ -59,50 +70,18 @@ def load_documents() -> list[dict[str, Any]]:
 
 def retrieve(query: str, limit: int = 5, history: list[dict[str, str]] | None = None) -> list[dict[str, Any]]:
     prior_user_text = " ".join(
-        message["content"] for message in (history or [])[-10:] if message["role"] == "user"
+        message["content"] for message in (history or [])[-6:] if message["role"] == "user"
     )
-    documents = load_documents()
-    query_text = f"{prior_user_text} {query}".strip() if re.search(r"\b(it|there|that|this)\b", query, re.IGNORECASE) else query
+    query_text = (
+        f"{prior_user_text} {query}".strip()
+        if prior_user_text and re.search(r"\b(it|there|that|this|them|those)\b", query, re.IGNORECASE)
+        else query
+    )
 
-    project_aliases = (
-        "AIDA",
-        "Tierra Viva",
-        "Albert Hall Mansions",
-        "Amaya",
-        "Trump Tower Jeddah",
-        "Trump International",
-        "W Residences",
-        "Da Vinci Tower",
-        "Davinci",
-        "DG Villas",
-    )
-    explicit_projects = sorted(
-        {alias for alias in project_aliases if re.search(re.escape(alias), query, re.IGNORECASE)},
-        key=len,
-        reverse=True,
-    )
-    if explicit_projects:
-        project = explicit_projects[0].lower()
-        documents = [
-            document
-            for document in documents
-            if project in f"{document.get('title', '')} {document.get('text', '')}".lower()
-        ]
-    else:
-        project_phrase = re.search(
-            r"(?:\b(?:at|about)\s+([A-Z][A-Za-z0-9 &'-]{2,})(?:\?|$)"
-            r"|\bhistory\s+of\s+([A-Z][A-Za-z0-9 &'-]{2,})(?:\?|$)"
-            r"|\bproperties?\s+(?:available\s+)?(?:at|in)\s+([A-Z][A-Za-z0-9 &'-]{2,})(?:\?|$))",
-            query,
-        )
-        if project_phrase:
-            project = next(part for part in project_phrase.groups() if part)
-            matching = [
-                document
-                for document in documents
-                if project.strip().lower() in f"{document.get('title', '')} {document.get('text', '')}".lower()
-            ]
-            documents = matching
+    if qdrant_retriever is not None:
+        return qdrant_retriever.retrieve(query_text, limit=limit)
+
+    documents = load_documents()
     return HybridRetriever(documents).retrieve(query_text, limit)
 
 
@@ -132,57 +111,84 @@ async def openrouter_answer(
 ) -> str:
     if not documents:
         return demo_answer(query, [])
-    api_key = os.getenv("OPENROUTER_API_KEY")
+    api_key = os.getenv("OPENROUTER_API_KEY", "").strip()
     if not api_key:
         return demo_answer(query, documents)
 
     context = "\n\n".join(
-        f"Title: {document['title']}\nURL: {document['url']}\nContent: {document['text']}"
+        f"Title: {document['title']}\n"
+        f"URL: {document['url']}\n"
+        f"Type: {document.get('source_type', 'general_page')} | "
+        f"Policy Status: {document.get('policy_status', 'active')} | "
+        f"Country: {document.get('countries', 'Unspecified')}\n"
+        f"Content: {document['text']}"
         for document in documents
     )
     messages = [
         {
             "role": "system",
             "content": (
-                "Answer only from the provided public sources and recent conversation. "
-                "Cite source titles and URLs. If the sources do not support an answer, "
-                "say that it is unknown. Never invent prices, availability, unit counts, "
-                "handover dates, or legal information."
+                "You are an AI real estate assistant for DarGlobal and Wasalt. "
+                "Answer ONLY from the provided public sources and recent conversation, "
+                "and respond in the same language as the user's question (English or Arabic). "
+                "Rules:\n"
+                "1. Source Priority: Trust 'project_page', 'platform_listing', and 'general_page' over 'blog_or_press' if facts conflict.\n"
+                "2. Legacy Policy Guardrail: If any source has Policy Status 'legacy_verify' (such as Spain's former real estate Golden Visa, which closed in 2025), "
+                "explicitly warn the user that the residency or tax program mentioned in that article may no longer be active.\n"
+                "3. Citations & Accuracy: Cite source URLs for your claims. If the sources do not support an answer, say so clearly. "
+                "Never invent prices, availability, unit counts, handover dates, or legal terms."
             ),
         },
         *history,
         {"role": "user", "content": f"Question: {query}\n\nSources:\n{context}"},
     ]
-    payload = {
-        "model": os.getenv("OPENROUTER_MODEL", "openai/gpt-oss-20b:free"),
-        "messages": messages,
-        "temperature": 0.2,
+
+    preferred = os.getenv("OPENROUTER_MODEL", "").strip()
+    candidate_models = [
+        m for m in [preferred, "openrouter/free", "google/gemma-3-27b-it:free", "meta-llama/llama-3.3-70b-instruct:free"] if m
+    ]
+
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "HTTP-Referer": os.getenv("APP_URL", "http://localhost:8000"),
+        "X-Title": "DarGlobal Applied AI Chatbot",
     }
-    try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.post(
-                "https://openrouter.ai/api/v1/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {api_key}",
-                    "HTTP-Referer": os.getenv("APP_URL", "http://localhost:8000"),
-                    "X-Title": "DarGlobal Applied AI Chatbot",
-                },
-                json=payload,
-            )
-            response.raise_for_status()
-            return response.json()["choices"][0]["message"]["content"]
-    except (httpx.HTTPError, KeyError, IndexError):
-        return demo_answer(query, documents)
+
+    async with httpx.AsyncClient(timeout=45.0) as client:
+        for model_name in candidate_models:
+            try:
+                response = await client.post(
+                    "https://openrouter.ai/api/v1/chat/completions",
+                    headers=headers,
+                    json={
+                        "model": model_name,
+                        "messages": messages,
+                        "temperature": 0.2,
+                    },
+                )
+                response.raise_for_status()
+                content = response.json()["choices"][0]["message"]["content"]
+                if content and content.strip():
+                    return content.strip()
+            except (httpx.HTTPError, KeyError, IndexError):
+                continue
+
+    return demo_answer(query, documents)
 
 
 @app.get("/health")
 async def health() -> dict[str, str]:
-    return {"status": "healthy", "documents": str(len(load_documents()))}
+    doc_count = qdrant_retriever.count() if qdrant_retriever is not None else len(load_documents())
+    return {
+        "status": "healthy",
+        "documents": str(doc_count),
+        "retriever": "qdrant_hybrid" if qdrant_retriever is not None else "tfidf_bm25",
+    }
 
 
 @app.get("/api/sources")
 async def sources() -> dict[str, list[dict[str, Any]]]:
-    return {"sources": load_documents()}
+    return {"sources": load_documents()[:200]}
 
 
 @app.get("/api/source-manifest")
@@ -203,7 +209,7 @@ async def chat(payload: dict[str, str]) -> dict[str, str]:
 
     session_id = payload.get("session_id", "").strip() or str(uuid.uuid4())
     history = conversations.pop(session_id, [])
-    documents = retrieve(query, history=history)
+    documents = await asyncio.to_thread(retrieve, query, 5, history)
     answer = await openrouter_answer(query, documents, history)
 
     history.extend([

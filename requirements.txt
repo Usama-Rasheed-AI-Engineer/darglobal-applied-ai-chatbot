@@ -10,3 +10,5 @@ scikit-learn==1.6.1
 curl-cffi==0.13.0
 lxml==6.0.2
 selectolax==0.3.34
+qdrant-client==1.20.0
+fastembed==0.9.1
